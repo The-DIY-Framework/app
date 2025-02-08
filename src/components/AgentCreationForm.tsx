@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -6,6 +6,9 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
+
+import * as faceapi from 'face-api.js';
+import { uploadToCloudinary, createImage, type DIDVoice } from '@/lib/formUtils';
 
 interface FormData {
   name: string;
@@ -30,21 +33,81 @@ const AgentCreationForm = () => {
   
   const [previewUrl, setPreviewUrl] = useState<string>('');
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setPreviewUrl(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+  const [error, setError] = useState('');
+  const [voices, setVoices] = useState<DIDVoice[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const loadModels = async () => {
+      await faceapi.nets.tinyFaceDetector.loadFromUri('/models');
+    };
+    loadModels();
+    fetchVoices();
+  }, []);
+
+  const fetchVoices = async () => {
+    try {
+      const response = await fetch('/api/tts/voices');
+      const data = await response.json();
+      setVoices(data.voices.filter((voice: DIDVoice) => 
+        voice.provider.toLowerCase() === 'microsoft'
+      ));
+    } catch (error) {
+      console.error('Error fetching voices:', error);
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    console.log('Form submitted:', formData);
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    setError('');
+    
+    if (file) {
+      try {
+        const img = await createImage(file);
+        const detections = await faceapi.detectAllFaces(img, new faceapi.TinyFaceDetectorOptions());
+
+        if (detections.length === 0) {
+          setError('No face detected. Please try another photo.');
+          return;
+        }
+
+        const cloudinaryUrl = await uploadToCloudinary(file);
+        setPreviewUrl(cloudinaryUrl);
+      } catch (error) {
+        setError('Error processing image. Please try again.');
+      }
+    }
   };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    
+    try {
+      const formDataToSend = new FormData();
+      Object.entries(formData).forEach(([key, value]) => {
+        formDataToSend.append(key, value);
+      });
+
+      const response = await fetch('/api/tts/createAgent', {
+        method: 'POST',
+        body: formDataToSend
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to create agent');
+      }
+
+      const data = await response.json();
+      window.location.href = `/agent/${data.id}`;
+    } catch (error) {
+      setError('Failed to create agent. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+ 
 
   return (
     <div className="w-full max-w-4xl mx-auto p-4">
