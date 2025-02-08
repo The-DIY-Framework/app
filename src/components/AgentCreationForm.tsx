@@ -84,7 +84,6 @@ const AgentCreationForm = () => {
     }
   };
 
-  // Filter voices based on selected criteria
   useEffect(() => {
     if (!formData.gender || !formData.language || !formData.style) return;
 
@@ -188,7 +187,7 @@ const AgentCreationForm = () => {
   const uploadToCloudinary = async (file: File): Promise<string> => {
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('upload_preset', 'spawn_imgs');
+    formData.append('upload_preset', 'diy_imgs');
     formData.append('cloud_name', 'dmlpeujlz');
 
     const response = await fetch(
@@ -419,7 +418,7 @@ const AgentCreationForm = () => {
               className="w-full bg-black hover:bg-gray-800"
               disabled={isLoading}
             >
-              {isLoading ? 'Creating Agent...' : 'Spawn'}
+              {isLoading ? 'Creating Agent...' : 'Do it'}
             </Button>
           </CardContent>
         </Card>

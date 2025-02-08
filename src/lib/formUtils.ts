@@ -17,7 +17,7 @@ export interface DIDLanguage {
 
 export const uploadToCloudinary = async (file: File): Promise<string> => {
   const cloudName = 'dmlpeujlz';
-  const uploadPreset = 'spawn_imgs';
+  const uploadPreset = 'diy_imgs';
 
   const formData = new FormData();
   formData.append('file', file);

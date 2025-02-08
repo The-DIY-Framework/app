@@ -16,20 +16,27 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
-router.get('/voices', async (req, res) => {
+router.get('/voices', async (req, res, next) => {
   try {
+    console.log('Fetching voices from D-ID API...');
     const response = await fetch('https://api.d-id.com/tts/voices', {
       headers: {
         'Authorization': `Basic ${DID_API_KEY}`,
+        'Accept': 'application/json'
       }
     });
     
-    if (!response.ok) throw new Error('Failed to fetch voices');
+    if (!response.ok) {
+      console.error('D-ID API Error:', await response.text());
+      throw new Error(`Failed to fetch voices: ${response.statusText}`);
+    }
     
     const voices = await response.json();
+    console.log(`Successfully fetched ${voices.length} voices`);
     res.json({ voices });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch voices' });
+    console.error('Error in /voices endpoint:', error);
+    next(error);
   }
 });
 
