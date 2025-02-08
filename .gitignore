@@ -38,6 +38,7 @@ coverage
 .mf
 .rollup.cache
 tsconfig.tsbuildinfo
+uploads
 
 # Miscellaneous
 .DS_Store
