@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -52,7 +52,7 @@ const AgentCreationForm = () => {
   const [voices, setVoices] = useState<DIDVoice[]>([]);
   const [filteredVoices, setFilteredVoices] = useState<DIDVoice[]>([]);
 
-  // Load face detection models and voices on mount
+  // Initialize face detection and fetch voices
   useEffect(() => {
     const initialize = async () => {
       try {
@@ -67,23 +67,7 @@ const AgentCreationForm = () => {
     initialize();
   }, []);
 
-  // Fetch voices from API
-  const fetchVoices = async () => {
-    try {
-      const response = await fetch('/api/tts/voices');
-      if (!response.ok) throw new Error('Failed to fetch voices');
-      
-      const data = await response.json();
-      const microsoftVoices = data.voices.filter(
-        (voice: DIDVoice) => voice.provider.toLowerCase() === 'microsoft'
-      );
-      setVoices(microsoftVoices);
-    } catch (error) {
-      console.error('Error fetching voices:', error);
-      setError('Failed to load voices. Please try again later.');
-    }
-  };
-
+  // Filter voices when criteria changes
   useEffect(() => {
     if (!formData.gender || !formData.language || !formData.style) return;
 
@@ -98,7 +82,114 @@ const AgentCreationForm = () => {
     setFilteredVoices(filtered);
   }, [formData.gender, formData.language, formData.style, voices]);
 
-  // Handle image upload and face detection
+  const getAvailableLanguages = (voices: DIDVoice[]) => {
+    const languageSet = new Set<string>();
+
+    voices.forEach((voice) => {
+      voice.languages.forEach((lang) => {
+        languageSet.add(lang.locale);
+      });
+    });
+
+    const languageDisplayNames = new Intl.DisplayNames(['en'], { type: 'language' });
+    const regionDisplayNames = new Intl.DisplayNames(['en'], { type: 'region' });
+
+    return Array.from(languageSet).sort().map(locale => {
+      const [language, region] = locale.split('-');
+      const languageName = languageDisplayNames.of(language) || language;
+      
+      let regionName = '';
+      if (region) {
+        try {
+          regionName = regionDisplayNames.of(region) || region;
+        } catch (error) {
+          console.warn(`Invalid region code "${region}" for locale "${locale}"`);
+          regionName = region;
+        }
+      }
+
+      return {
+        value: locale,
+        label: regionName ? `${languageName} (${regionName})` : languageName
+      };
+    });
+  };
+
+  const getAvailableStyles = (voices: DIDVoice[]) => {
+    const styleSet = new Set<string>();
+
+    voices.forEach((voice) => {
+      voice.styles.forEach((style) => {
+        styleSet.add(style.toLowerCase());
+      });
+    });
+
+    return Array.from(styleSet).sort().map(style => ({
+      value: style,
+      label: style.charAt(0).toUpperCase() + style.slice(1)
+    }));
+  };
+
+  const fetchVoices = async () => {
+    try {
+      const response = await fetch('/api/tts/voices');
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to fetch voices');
+      }
+      
+      const data = await response.json();
+      if (!Array.isArray(data.voices)) {
+        throw new Error('Invalid response format');
+      }
+      
+      const microsoftVoices = data.voices.filter(
+        (voice: DIDVoice) => voice.provider.toLowerCase() === 'microsoft'
+      );
+      setVoices(microsoftVoices);
+      setFilteredVoices(microsoftVoices);
+    } catch (error) {
+      console.error('Error fetching voices:', error);
+      setError('Failed to load voices. Please try again later.');
+    }
+  };
+
+  const createImage = (file: File): Promise<HTMLImageElement> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(img.src);
+        resolve(img);
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(img.src);
+        reject(new Error('Failed to load image'));
+      };
+      img.src = URL.createObjectURL(file);
+    });
+  };
+
+  const uploadToCloudinary = async (file: File): Promise<string> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('upload_preset', 'spawn_imgs');
+    formData.append('cloud_name', 'dmlpeujlz');
+
+    const response = await fetch(
+      `https://api.cloudinary.com/v1_1/dmlpeujlz/image/upload`,
+      {
+        method: 'POST',
+        body: formData
+      }
+    );
+
+    if (!response.ok) throw new Error('Failed to upload image');
+
+    const data = await response.json();
+    return data.secure_url;
+  };
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     setError('');
@@ -106,10 +197,7 @@ const AgentCreationForm = () => {
     if (file) {
       try {
         const img = await createImage(file);
-        const detections = await faceapi.detectAllFaces(
-          img, 
-          new faceapi.TinyFaceDetectorOptions()
-        );
+        const detections = await faceapi.detectAllFaces(img, new faceapi.TinyFaceDetectorOptions());
 
         if (detections.length === 0) {
           setError('No face detected. Please try another photo.');
@@ -126,7 +214,6 @@ const AgentCreationForm = () => {
     }
   };
 
-  // Handle knowledge base file upload
   const handleKnowledgeBaseUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -134,7 +221,6 @@ const AgentCreationForm = () => {
     }
   };
 
-  // Form submission
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
@@ -165,43 +251,6 @@ const AgentCreationForm = () => {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  // Helper function to create image element
-  const createImage = (file: File): Promise<HTMLImageElement> => {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => {
-        URL.revokeObjectURL(img.src);
-        resolve(img);
-      };
-      img.onerror = () => {
-        URL.revokeObjectURL(img.src);
-        reject(new Error('Failed to load image'));
-      };
-      img.src = URL.createObjectURL(file);
-    });
-  };
-
-  // Helper function to upload to Cloudinary
-  const uploadToCloudinary = async (file: File): Promise<string> => {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('upload_preset', 'diy_imgs');
-    formData.append('cloud_name', 'dmlpeujlz');
-
-    const response = await fetch(
-      `https://api.cloudinary.com/v1_1/dmlpeujlz/image/upload`,
-      {
-        method: 'POST',
-        body: formData
-      }
-    );
-
-    if (!response.ok) throw new Error('Failed to upload image');
-
-    const data = await response.json();
-    return data.secure_url;
   };
 
   return (
@@ -306,10 +355,11 @@ const AgentCreationForm = () => {
                     <SelectValue placeholder="Select Language" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="en-US">English (US)</SelectItem>
-                    <SelectItem value="es-ES">Spanish (Spain)</SelectItem>
-                    <SelectItem value="fr-FR">French (France)</SelectItem>
-                    <SelectItem value="de-DE">German (Germany)</SelectItem>
+                    {getAvailableLanguages(voices).map(({ value, label }) => (
+                      <SelectItem key={value} value={value}>
+                        {label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -326,11 +376,11 @@ const AgentCreationForm = () => {
                     <SelectValue placeholder="Select Tone or Style" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="formal">Formal</SelectItem>
-                    <SelectItem value="friendly">Friendly</SelectItem>
-                    <SelectItem value="professional">Professional</SelectItem>
-                    <SelectItem value="casual">Casual</SelectItem>
-                    <SelectItem value="playful">Playful</SelectItem>
+                    {getAvailableStyles(voices).map(({ value, label }) => (
+                      <SelectItem key={value} value={value}>
+                        {label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -418,7 +468,7 @@ const AgentCreationForm = () => {
               className="w-full bg-black hover:bg-gray-800"
               disabled={isLoading}
             >
-              {isLoading ? 'Creating Agent...' : 'Do it'}
+              {isLoading ? 'Creating Agent...' : 'Spawn'}
             </Button>
           </CardContent>
         </Card>
