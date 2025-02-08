@@ -19,7 +19,7 @@ const AVATAR_DIMENSIONS = {
 };
 
 const AgentInteraction = () => {
-  const { id } = useParams(); // Get agent ID from URL
+  const { id } = useParams();
   const videoRef = useRef<HTMLVideoElement>(null);
   const [agentData, setAgentData] = useState<AgentData | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<string>('Initializing');
@@ -43,59 +43,64 @@ const AgentInteraction = () => {
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const sendMessage = useCallback(async (message: string) => {
-    if (!agentData?.id || !agentData?.chatId) {
-      setError('Missing agent information');
-      return;
+  if (!agentData?.id || !agentData?.chatId) {
+    setError('Missing agent information');
+    return;
+  }
+
+  if (!streamIdRef.current || !sessionIdRef.current) {
+    setError('Connection not established');
+    return;
+  }
+
+  try {
+    setHasInteracted(true);
+    setMessages(prev => [...prev, `You: ${message}`]);
+
+    const response = await fetch(`https://api.d-id.com/agents/${agentData.id}/chat/${agentData.chatId}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Basic ${agentData.didApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        streamId: streamIdRef.current,
+        sessionId: sessionIdRef.current,
+        messages: [{
+          role: 'user',
+          content: message,
+          created_at: new Date().toString()
+        }]
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to send message');
     }
 
-    if (!streamIdRef.current || !sessionIdRef.current) {
-      setError('Connection not established');
-      return;
-    }
+    const data = await response.json();
+    // Add the agent's response to messages
+    setMessages(prev => [...prev, `${agentData.name || 'Agent'}: ${data.response?.content || data.output?.content || 'No response'}`]);
 
-    try {
-      setHasInteracted(true);
-      setMessages(prev => [...prev, `You: ${message}`]);
-
-      const response = await fetch(`https://api.d-id.com/agents/${agentData.id}/chat/${agentData.chatId}`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Basic ${agentData.didApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          streamId: streamIdRef.current,
-          sessionId: sessionIdRef.current,
-          messages: [{
-            role: 'user',
-            content: message,
-            created_at: new Date().toString()
-          }]
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to send message');
-      }
-
-      const data = await response.json();
-
-    } catch (error) {
-      console.error('Message send error:', error);
-      setError('Failed to send message');
-    }
-  }, [agentData]);
+  } catch (error) {
+    console.error('Message send error:', error);
+    setError('Failed to send message');
+  }
+}, [agentData]);
 
   const createPeerConnection = async (offer: RTCSessionDescriptionInit, iceServers: RTCIceServer[]) => {
     if (peerConnectionRef.current) {
+      console.log('Closing existing peer connection');
       peerConnectionRef.current.close();
     }
 
+    console.log('Creating new peer connection with ICE servers:', iceServers);
     const pc = new RTCPeerConnection({ iceServers });
     peerConnectionRef.current = pc;
 
     pc.addEventListener('icegatheringstatechange', () => {
       console.log('ICE gathering state:', pc.iceGatheringState);
+      setConnectionStatus(`ICE: ${pc.iceGatheringState}`);
     });
 
     pc.addEventListener('iceconnectionstatechange', () => {
@@ -127,10 +132,6 @@ const AgentInteraction = () => {
       }
     });
 
-    pc.addEventListener('signalingstatechange', () => {
-      console.log('Signaling state:', pc.signalingState);
-    });
-
     pc.addEventListener('track', (event) => {
       if (videoRef.current && event.streams[0]) {
         videoRef.current.srcObject = event.streams[0];
@@ -138,6 +139,7 @@ const AgentInteraction = () => {
       }
     });
 
+    // Create data channel
     const dataChannel = pc.createDataChannel('JanusDataChannel');
     dataChannelRef.current = dataChannel;
 
@@ -171,11 +173,21 @@ const AgentInteraction = () => {
       }
     };
 
-    await pc.setRemoteDescription(offer);
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
+    try {
+      console.log('Setting remote description');
+      await pc.setRemoteDescription(offer);
+      
+      console.log('Creating answer');
+      const answer = await pc.createAnswer();
+      
+      console.log('Setting local description');
+      await pc.setLocalDescription(answer);
 
-    return answer;
+      return answer;
+    } catch (error) {
+      console.error('Error in peer connection setup:', error);
+      throw error;
+    }
   };
 
   const handleReconnection = useCallback(() => {
@@ -218,9 +230,11 @@ const AgentInteraction = () => {
 
   const initializeConnection = async (agentData: AgentData) => {
     try {
+      console.log('Initializing connection for agent:', agentData.id);
       const defaultImage = 'https://create-images-results.d-id.com/DefaultPresenters/Emma_f/v1_image.jpeg';
       setIdleImage(agentData.avatarUrl || defaultImage);
 
+      console.log('Creating stream...');
       const streamResponse = await fetch('https://api.d-id.com/talks/streams', {
         method: 'POST',
         headers: {
@@ -233,17 +247,22 @@ const AgentInteraction = () => {
       });
 
       if (!streamResponse.ok) {
-        throw new Error('Failed to create stream');
+        const errorText = await streamResponse.text();
+        console.error('Stream creation failed:', errorText);
+        throw new Error(`Failed to create stream: ${errorText}`);
       }
 
-      const { id: newStreamId, offer, ice_servers: iceServers, session_id: newSessionId } = await streamResponse.json();
+      const streamData = await streamResponse.json();
+      console.log('Stream created:', streamData);
 
-      streamIdRef.current = newStreamId;
-      sessionIdRef.current = newSessionId;
+      streamIdRef.current = streamData.id;
+      sessionIdRef.current = streamData.session_id;
 
-      const answer = await createPeerConnection(offer, iceServers);
+      console.log('Creating peer connection...');
+      const answer = await createPeerConnection(streamData.offer, streamData.ice_servers);
 
-      const sdpResponse = await fetch(`https://api.d-id.com/talks/streams/${newStreamId}/sdp`, {
+      console.log('Setting SDP...');
+      const sdpResponse = await fetch(`https://api.d-id.com/talks/streams/${streamData.id}/sdp`, {
         method: 'POST',
         headers: {
           'Authorization': `Basic ${agentData.didApiKey}`,
@@ -251,12 +270,14 @@ const AgentInteraction = () => {
         },
         body: JSON.stringify({
           answer,
-          session_id: newSessionId
+          session_id: streamData.session_id
         })
       });
 
       if (!sdpResponse.ok) {
-        throw new Error('Failed to set SDP');
+        const errorText = await sdpResponse.text();
+        console.error('SDP setup failed:', errorText);
+        throw new Error(`Failed to set SDP: ${errorText}`);
       }
 
       if (statsIntervalRef.current) {
@@ -280,8 +301,9 @@ const AgentInteraction = () => {
         });
       }, 500);
 
+      console.log('Connection initialized successfully');
     } catch (error) {
-      console.error('Connection error:', error);
+      console.error('Connection initialization error:', error);
       setError('Failed to establish connection');
       throw error;
     }
@@ -333,7 +355,7 @@ const AgentInteraction = () => {
       
       <div className="bg-white rounded-lg shadow-sm overflow-hidden">
         <div className="aspect-video relative">
-          {(!isStreamReady || (!isVideoPlaying)) && (
+          {(!isVideoPlaying) && (
             agentData?.idle_video ? (
               <video 
                 src={agentData.idle_video}
@@ -341,7 +363,7 @@ const AgentInteraction = () => {
                 loop
                 muted
                 playsInline
-                className="w-full h-full object-cover"
+                className="w-full h-full object-contain bg-black"
               />
             ) : idleImage && (
               <img 
@@ -355,13 +377,19 @@ const AgentInteraction = () => {
             ref={videoRef} 
             autoPlay 
             playsInline
-            className={`w-full h-full object-cover ${(isStreamReady && isVideoPlaying) ? 'block' : 'hidden'}`}
+            className={`w-full h-full object-contain bg-black absolute top-0 left-0 ${isVideoPlaying ? 'opacity-100' : 'opacity-0'}`}
           />
           {isReconnecting && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-white">
-              Reconnecting...
+              <div className="text-center">
+                <div className="mb-2">Reconnecting...</div>
+                <div className="text-sm opacity-75">{connectionStatus}</div>
+              </div>
             </div>
           )}
+          <div className="absolute top-2 right-2 px-3 py-1 rounded bg-black/50 text-white text-sm">
+            {connectionStatus}
+          </div>
         </div>
 
         <div className="h-64 overflow-y-auto p-4 bg-gray-50">
@@ -399,11 +427,6 @@ const AgentInteraction = () => {
         <div className="mt-4 p-4 bg-gray-50 rounded-lg">
           <p className="text-sm text-gray-600">Connection Status: {connectionStatus}</p>
           {isReconnecting && <p className="text-sm text-gray-600">Attempting to reconnect...</p>}
-          {agentData && (
-            <pre className="mt-2 text-xs overflow-x-auto">
-              {JSON.stringify(agentData, null, 2)}
-            </pre>
-          )}
         </div>
       )}
     </div>
