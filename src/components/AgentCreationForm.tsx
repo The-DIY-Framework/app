@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -6,57 +6,100 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
-
 import * as faceapi from 'face-api.js';
-import { uploadToCloudinary, createImage, type DIDVoice } from '@/lib/formUtils';
+
+interface DIDVoice {
+  id: string;
+  name: string;
+  gender: string;
+  languages: Array<{
+    locale: string;
+    language: string;
+  }>;
+  access: string;
+  provider: string;
+  styles: string[];
+}
 
 interface FormData {
   name: string;
-  avatar?: File;
   gender: string;
   language: string;
   style: string;
   personality: string;
-  knowledgeBase?: File;
+  voice: string;
   additionalInfo: string;
+  avatar?: File;
+  knowledgeBase?: File;
 }
 
 const AgentCreationForm = () => {
+  // Form state
   const [formData, setFormData] = useState<FormData>({
     name: '',
     gender: '',
     language: '',
     style: '',
     personality: '',
+    voice: '',
     additionalInfo: ''
   });
-  
+
+  // UI state
   const [previewUrl, setPreviewUrl] = useState<string>('');
-
-  const [error, setError] = useState('');
+  const [error, setError] = useState<string>('');
+  const [isLoading, setIsLoading] = useState<boolean>(false);
   const [voices, setVoices] = useState<DIDVoice[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [filteredVoices, setFilteredVoices] = useState<DIDVoice[]>([]);
 
+  // Load face detection models and voices on mount
   useEffect(() => {
-    const loadModels = async () => {
-      await faceapi.nets.tinyFaceDetector.loadFromUri('/models');
+    const initialize = async () => {
+      try {
+        await faceapi.nets.tinyFaceDetector.loadFromUri('/models');
+        await fetchVoices();
+      } catch (error) {
+        console.error('Initialization error:', error);
+        setError('Failed to initialize. Please refresh the page.');
+      }
     };
-    loadModels();
-    fetchVoices();
+
+    initialize();
   }, []);
 
+  // Fetch voices from API
   const fetchVoices = async () => {
     try {
       const response = await fetch('/api/tts/voices');
+      if (!response.ok) throw new Error('Failed to fetch voices');
+      
       const data = await response.json();
-      setVoices(data.voices.filter((voice: DIDVoice) => 
-        voice.provider.toLowerCase() === 'microsoft'
-      ));
+      const microsoftVoices = data.voices.filter(
+        (voice: DIDVoice) => voice.provider.toLowerCase() === 'microsoft'
+      );
+      setVoices(microsoftVoices);
     } catch (error) {
       console.error('Error fetching voices:', error);
+      setError('Failed to load voices. Please try again later.');
     }
   };
 
+  // Filter voices based on selected criteria
+  useEffect(() => {
+    if (!formData.gender || !formData.language || !formData.style) return;
+
+    const filtered = voices.filter(voice => {
+      const genderMatch = formData.gender === 'neutral' ? true : voice.gender.toLowerCase() === formData.gender.toLowerCase();
+      const languageMatch = voice.languages.some(lang => lang.locale.toLowerCase() === formData.language.toLowerCase());
+      const styleMatch = voice.styles.length === 0 || voice.styles.includes(formData.style.toLowerCase());
+      
+      return genderMatch && languageMatch && styleMatch;
+    });
+
+    setFilteredVoices(filtered);
+  }, [formData.gender, formData.language, formData.style, voices]);
+
+  // Handle image upload and face detection
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     setError('');
@@ -64,7 +107,10 @@ const AgentCreationForm = () => {
     if (file) {
       try {
         const img = await createImage(file);
-        const detections = await faceapi.detectAllFaces(img, new faceapi.TinyFaceDetectorOptions());
+        const detections = await faceapi.detectAllFaces(
+          img, 
+          new faceapi.TinyFaceDetectorOptions()
+        );
 
         if (detections.length === 0) {
           setError('No face detected. Please try another photo.');
@@ -73,20 +119,36 @@ const AgentCreationForm = () => {
 
         const cloudinaryUrl = await uploadToCloudinary(file);
         setPreviewUrl(cloudinaryUrl);
+        setFormData(prev => ({ ...prev, avatar: file }));
       } catch (error) {
+        console.error('File processing error:', error);
         setError('Error processing image. Please try again.');
       }
     }
   };
 
+  // Handle knowledge base file upload
+  const handleKnowledgeBaseUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setFormData(prev => ({ ...prev, knowledgeBase: file }));
+    }
+  };
+
+  // Form submission
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
-    
+    setIsLoading(true);
+    setError('');
+
     try {
       const formDataToSend = new FormData();
       Object.entries(formData).forEach(([key, value]) => {
-        formDataToSend.append(key, value);
+        if (value instanceof File) {
+          formDataToSend.append(key, value);
+        } else {
+          formDataToSend.append(key, String(value));
+        }
       });
 
       const response = await fetch('/api/tts/createAgent', {
@@ -94,24 +156,65 @@ const AgentCreationForm = () => {
         body: formDataToSend
       });
 
-      if (!response.ok) {
-        throw new Error('Failed to create agent');
-      }
+      if (!response.ok) throw new Error('Failed to create agent');
 
       const data = await response.json();
       window.location.href = `/agent/${data.id}`;
     } catch (error) {
+      console.error('Submission error:', error);
       setError('Failed to create agent. Please try again.');
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   };
 
- 
+  // Helper function to create image element
+  const createImage = (file: File): Promise<HTMLImageElement> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(img.src);
+        resolve(img);
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(img.src);
+        reject(new Error('Failed to load image'));
+      };
+      img.src = URL.createObjectURL(file);
+    });
+  };
+
+  // Helper function to upload to Cloudinary
+  const uploadToCloudinary = async (file: File): Promise<string> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('upload_preset', 'spawn_imgs');
+    formData.append('cloud_name', 'dmlpeujlz');
+
+    const response = await fetch(
+      `https://api.cloudinary.com/v1_1/dmlpeujlz/image/upload`,
+      {
+        method: 'POST',
+        body: formData
+      }
+    );
+
+    if (!response.ok) throw new Error('Failed to upload image');
+
+    const data = await response.json();
+    return data.secure_url;
+  };
 
   return (
     <div className="w-full max-w-4xl mx-auto p-4">
       <form onSubmit={handleSubmit} className="space-y-8">
+        {error && (
+          <div className="bg-red-50 text-red-500 p-4 rounded-md">
+            {error}
+          </div>
+        )}
+
+        {/* Step 1: Identity */}
         <Card>
           <CardHeader>
             <CardTitle>
@@ -142,10 +245,15 @@ const AgentCreationForm = () => {
                   accept="image/*"
                   onChange={handleFileChange}
                   className="mt-2"
+                  required
                 />
                 {previewUrl && (
                   <div className="mt-4">
-                    <img src={previewUrl} alt="Avatar preview" className="w-32 h-32 object-cover rounded" />
+                    <img 
+                      src={previewUrl} 
+                      alt="Avatar preview" 
+                      className="w-32 h-32 object-cover rounded"
+                    />
                   </div>
                 )}
               </div>
@@ -153,6 +261,7 @@ const AgentCreationForm = () => {
           </CardContent>
         </Card>
 
+        {/* Step 2: Communication */}
         <Card>
           <CardHeader>
             <CardTitle>
@@ -198,10 +307,10 @@ const AgentCreationForm = () => {
                     <SelectValue placeholder="Select Language" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="english">English</SelectItem>
-                    <SelectItem value="spanish">Spanish</SelectItem>
-                    <SelectItem value="french">French</SelectItem>
-                    <SelectItem value="german">German</SelectItem>
+                    <SelectItem value="en-US">English (US)</SelectItem>
+                    <SelectItem value="es-ES">Spanish (Spain)</SelectItem>
+                    <SelectItem value="fr-FR">French (France)</SelectItem>
+                    <SelectItem value="de-DE">German (Germany)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -245,9 +354,29 @@ const AgentCreationForm = () => {
                 </Select>
               </div>
             </div>
+
+            <div>
+              <Label>Voice</Label>
+              <Select 
+                value={formData.voice}
+                onValueChange={(value) => setFormData({...formData, voice: value})}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select Voice" />
+                </SelectTrigger>
+                <SelectContent>
+                  {filteredVoices.map((voice) => (
+                    <SelectItem key={voice.id} value={voice.id}>
+                      {voice.name} ({voice.gender})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </CardContent>
         </Card>
 
+        {/* Step 3: Knowledge */}
         <Card>
           <CardHeader>
             <CardTitle>
@@ -266,12 +395,7 @@ const AgentCreationForm = () => {
               <Input
                 type="file"
                 accept=".txt,.pdf,.docx,.json"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) {
-                    setFormData({...formData, knowledgeBase: file});
-                  }
-                }}
+                onChange={handleKnowledgeBaseUpload}
                 className="mt-2"
               />
               <p className="text-sm text-gray-500 mt-1">
@@ -290,8 +414,12 @@ const AgentCreationForm = () => {
               />
             </div>
 
-            <Button type="submit" className="w-full bg-black hover:bg-gray-800">
-              Do it
+            <Button 
+              type="submit" 
+              className="w-full bg-black hover:bg-gray-800"
+              disabled={isLoading}
+            >
+              {isLoading ? 'Creating Agent...' : 'Spawn'}
             </Button>
           </CardContent>
         </Card>
