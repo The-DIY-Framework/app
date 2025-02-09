@@ -1,3 +1,105 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Wallet Button Styles */
+.wallet-adapter-button-trigger {
+  background: none !important;
+}
+
+.wallet-adapter-button {
+  width: fit-content !important;
+  padding: 0 24px !important;
+  height: 48px !important;
+  color: white !important;
+  font-family: inherit !important;
+  font-size: 16px !important;
+  font-weight: 500 !important;
+  border-radius: 6px !important;
+  background-color: black !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+  transition: all 0.2s ease !important;
+}
+
+.wallet-adapter-button-trigger:hover .wallet-adapter-button,
+.wallet-adapter-button:hover {
+  background-color: #1f2937 !important;
+}
+
+/* Modal Styles */
+.wallet-adapter-modal-wrapper {
+  background: white !important;
+}
+
+.wallet-adapter-modal-button-close {
+  background: #f3f4f6 !important;
+}
+
+.wallet-adapter-modal-title {
+  color: black !important;
+}
+
+.wallet-adapter-modal-list .wallet-adapter-button {
+  width: 100% !important;
+  border-radius: 6px !important;
+  margin: 4px 0 !important;
+}
+
+/* ... previous styles ... */
+
+/* Modal and List Item Styles */
+.wallet-adapter-modal-wrapper {
+  background: white !important;
+}
+
+.wallet-adapter-modal-button-close {
+  background: #f3f4f6 !important;
+}
+
+.wallet-adapter-modal-title {
+  color: black !important;
+}
+
+.wallet-adapter-modal-list {
+  margin: 0 20px !important;
+}
+
+.wallet-adapter-modal-list .wallet-adapter-button {
+  width: 100% !important;
+  border-radius: 6px !important;
+  margin: 8px 0 !important;  /* Increased margin between buttons */
+  padding: 12px 20px !important;  /* Added consistent padding */
+}
+
+.wallet-adapter-modal-list-more {
+  margin: 16px 20px !important;  /* Added margin for bottom section */
+}
+
+/* Modal and List Item Styles */
+.wallet-adapter-modal-container {
+  padding: 20px !important;
+}
+
+.wallet-adapter-modal-content {
+  padding: 20px !important;
+}
+
+.wallet-adapter-modal-list-more {
+  padding: 20px !important;
+}
+
+.wallet-adapter-modal-list {
+  padding: 20px !important;
+}
+
+.wallet-adapter-modal-list li {
+  margin: 10px 0 !important;
+}
+
+.wallet-adapter-modal-list li button {
+  width: 100% !important;
+  margin: 8px 0 !important;
+}
